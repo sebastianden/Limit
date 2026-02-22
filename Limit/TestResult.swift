@@ -33,6 +33,12 @@ struct TestResult: Codable, Identifiable {
     }
 }
 
+// MARK: - Raw Force Reading
+struct RawForceReading: Codable {
+    let timestamp: Double
+    let force: Double
+}
+
 // MARK: - Phase Data Model
 struct PhaseData: Codable, Identifiable {
     let id: UUID
@@ -41,14 +47,16 @@ struct PhaseData: Codable, Identifiable {
     let meanForce: Double
     let impulse: Double
     let duration: Double
+    let rawReadings: [RawForceReading]
 
-    init(id: UUID = UUID(), phaseNumber: Int, peakForce: Double, meanForce: Double, impulse: Double, duration: Double) {
+    init(id: UUID = UUID(), phaseNumber: Int, peakForce: Double, meanForce: Double, impulse: Double, duration: Double, rawReadings: [RawForceReading] = []) {
         self.id = id
         self.phaseNumber = phaseNumber
         self.peakForce = peakForce
         self.meanForce = meanForce
         self.impulse = impulse
         self.duration = duration
+        self.rawReadings = rawReadings
     }
 
     // Convert from ContractionData
@@ -59,6 +67,7 @@ struct PhaseData: Codable, Identifiable {
         self.meanForce = contraction.meanForce
         self.impulse = contraction.impulse
         self.duration = contraction.endTime - contraction.startTime
+        self.rawReadings = contraction.rawData.map { RawForceReading(timestamp: $0.timestamp, force: $0.force) }
     }
 }
 
@@ -70,6 +79,9 @@ extension TestResult {
         csv += "Critical Force (CF): \(String(format: "%.2f", criticalForce)) kg\n"
         csv += "W' (W-Prime): \(String(format: "%.1f", wPrime)) kg·s\n"
         csv += "\n"
+
+        // SECTION 1: Phase Summary Statistics
+        csv += "=== PHASE SUMMARY ===\n"
         csv += "Phase,Peak Force (kg),Mean Force (kg),Impulse (kg·s),Duration (s)\n"
 
         for phase in phases {
@@ -78,6 +90,18 @@ extension TestResult {
             csv += "\(String(format: "%.2f", phase.meanForce)),"
             csv += "\(String(format: "%.2f", phase.impulse)),"
             csv += "\(String(format: "%.2f", phase.duration))\n"
+        }
+
+        // SECTION 2: Raw Force Data
+        csv += "\n=== RAW FORCE DATA ===\n"
+        csv += "Phase,Time (s),Force (kg)\n"
+
+        for phase in phases {
+            for reading in phase.rawReadings {
+                csv += "\(phase.phaseNumber),"
+                csv += "\(String(format: "%.3f", reading.timestamp)),"
+                csv += "\(String(format: "%.2f", reading.force))\n"
+            }
         }
 
         return csv

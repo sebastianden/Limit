@@ -75,16 +75,34 @@ class PersistenceManager: ObservableObject {
     func exportToCSV(result: TestResult) -> URL? {
         let csv = result.toCSV()
 
-        let tempDirectory = FileManager.default.temporaryDirectory
+        // Use cache directory instead of temp - more suitable for files that will be shared
+        let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let exportDirectory = cacheDirectory.appendingPathComponent("Exports", isDirectory: true)
+
+        // Create export directory if needed
+        do {
+            try FileManager.default.createDirectory(at: exportDirectory, withIntermediateDirectories: true)
+        } catch {
+            print("⚠️ Error creating export directory: \(error)")
+        }
+
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
         let dateString = dateFormatter.string(from: result.date)
         let fileName = "CF_Test_\(dateString).csv"
-        let fileURL = tempDirectory.appendingPathComponent(fileName)
+        let fileURL = exportDirectory.appendingPathComponent(fileName)
 
         do {
+            // Write file
             try csv.write(to: fileURL, atomically: true, encoding: .utf8)
-            print("✅ Exported CSV to: \(fileURL)")
+
+            // Set file attributes to exclude from backup
+            var resourceValues = URLResourceValues()
+            resourceValues.isExcludedFromBackup = true
+            var mutableURL = fileURL
+            try mutableURL.setResourceValues(resourceValues)
+
+            print("✅ Exported CSV to: \(fileURL.path)")
             return fileURL
         } catch {
             print("❌ Error exporting CSV: \(error)")

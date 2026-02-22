@@ -11,8 +11,7 @@ import Charts
 struct CriticalForceTestView: View {
     @ObservedObject var bluetoothManager: BluetoothManager
     @StateObject private var testViewModel = CriticalForceViewModel()
-    @State private var showingExportSheet = false
-    @State private var exportURL: URL?
+    @State private var exportItem: ExportItem?
 
     var body: some View {
         ScrollView {
@@ -40,10 +39,8 @@ struct CriticalForceTestView: View {
         .onAppear {
             setupHapticFeedback()
         }
-        .sheet(isPresented: $showingExportSheet) {
-            if let url = exportURL {
-                ShareSheet(items: [url])
-            }
+        .sheet(item: $exportItem) { item in
+            ShareSheet(items: [item.url])
         }
     }
 
@@ -77,7 +74,7 @@ struct CriticalForceTestView: View {
             // Instruction
             VStack(alignment: .trailing, spacing: 4) {
                 if testViewModel.currentPhase != .preparation {
-                    Text("\(testViewModel.currentContraction)/24")
+                    Text("\(testViewModel.currentContraction)/\(testViewModel.totalPhases)")
                         .font(.system(size: 20, weight: .bold, design: .rounded))
                         .monospacedDigit()
                 } else {
@@ -136,7 +133,7 @@ struct CriticalForceTestView: View {
 
                     Spacer()
 
-                    Text("\(testViewModel.currentContraction) / 24 phases")
+                    Text("\(testViewModel.currentContraction) / \(testViewModel.totalPhases) phases")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
@@ -349,6 +346,9 @@ struct CriticalForceTestView: View {
                 .background(Color.blue.opacity(0.1))
                 .clipShape(RoundedRectangle(cornerRadius: 16))
 
+                // Full Test Chart
+                fullTestChart
+
                 // Phase Summary
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Phase Summary")
@@ -412,6 +412,80 @@ struct CriticalForceTestView: View {
         }
     }
 
+    // MARK: - Full Test Chart
+    private var fullTestChart: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Complete Test Data")
+                .font(.headline)
+
+            let cf = testViewModel.criticalForce ?? 0
+
+            // Flatten all raw data with absolute timeline
+            // Each phase starts at (phaseNumber-1) * 10s (7s work + 3s rest)
+            let allDataPoints = testViewModel.contractions.flatMap { contraction -> [(time: Double, force: Double)] in
+                let phaseStartTime = Double(contraction.contractionNumber - 1) * 10.0
+                return contraction.rawData.map { reading in
+                    (time: phaseStartTime + reading.timestamp, force: reading.force)
+                }
+            }
+
+            // Calculate time domain
+            let maxTime = allDataPoints.map { $0.time }.max() ?? 0
+
+            Chart {
+                // Plot raw force data
+                ForEach(Array(allDataPoints.enumerated()), id: \.offset) { index, point in
+                    LineMark(
+                        x: .value("Time", point.time),
+                        y: .value("Force", point.force)
+                    )
+                    .foregroundStyle(.blue)
+                    .interpolationMethod(.stepEnd)
+                }
+
+                // Critical Force reference line
+                if cf > 0 {
+                    RuleMark(y: .value("Critical Force", cf))
+                        .foregroundStyle(.green)
+                        .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 5]))
+                        .annotation(position: .top, alignment: .trailing) {
+                            Text("CF: \(String(format: "%.1f", cf)) kg")
+                                .font(.caption)
+                                .padding(4)
+                                .background(Color.green.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let force = value.as(Double.self) {
+                            Text("\(Int(force)) kg")
+                        }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let time = value.as(Double.self) {
+                            Text("\(Int(time))s")
+                        }
+                    }
+                }
+            }
+            .chartXScale(domain: 0...max(maxTime, 1))
+            .frame(height: 200)
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(radius: 2)
+    }
+
     private func exportCurrentResult() {
         guard let cf = testViewModel.criticalForce, let wp = testViewModel.wPrime else {
             return
@@ -419,8 +493,7 @@ struct CriticalForceTestView: View {
 
         let result = TestResult(from: testViewModel.contractions, criticalForce: cf, wPrime: wp)
         if let url = PersistenceManager.shared.exportToCSV(result: result) {
-            exportURL = url
-            showingExportSheet = true
+            exportItem = ExportItem(url: url)
         }
     }
 

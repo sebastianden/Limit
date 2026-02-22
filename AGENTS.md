@@ -2,121 +2,87 @@
 
 ## Project Overview
 
-**Limit** is an iOS app for climbing finger strength training that connects to a Bluetooth scale (IF_B7) and implements scientific finger strength testing protocols.
+**Limit** is an iOS app for climbing finger strength training that connects to a Bluetooth scale (IF_B7) and implements the Kellawan & Tschakovsky Critical Force test protocol.
 
 ### Core Features
 - **Max Force Test**: Simple maximum force measurement
-- **Critical Force (CF) Test**: Scientific protocol based on Kellawan & Tschakovsky methodology for measuring finger flexor critical force and W' (work capacity above CF)
+- **Critical Force Test**: 24-phase protocol (7s work, 3s rest) measuring CF and W' (work capacity above CF)
+- **Data Visualization**: Real-time charts + complete test visualization with CF reference line
+- **History & Export**: Save results with full raw data, export to CSV
 
 ## Architecture
 
 ### Tech Stack
 - **Platform**: iOS (SwiftUI)
-- **Language**: Swift
-- **Bluetooth**: CoreBluetooth (passive scanning, no active connection)
-- **State Management**: Combine framework with @Published properties
-- **Persistence**: JSON files in Documents directory
-- **Export**: CSV format with ISO8601 dates
+- **Bluetooth**: CoreBluetooth (passive scanning, no pairing)
+- **State Management**: Combine framework
+- **Persistence**: JSON (Documents directory)
+- **Export**: Two-section CSV (summary + raw data)
 
 ### Navigation Structure
-The app uses a **single TabView with 3 tabs**:
-1. **Max Force Tab**: Connection view or Max Force test
-2. **Critical Force Tab**: Connection view or CF test
-3. **History Tab**: Browse saved test results
-
-**Important**: Earlier versions had nested TabViews (Tests → Max/CF) which caused overlapping tab bars. The current flat structure avoids this issue. Each test tab independently shows the connection view when disconnected.
+Flat TabView with 3 tabs (Max Force, Critical Force, History). No nested tabs to avoid overlapping tab bars.
 
 ### Key Files
-
 ```
 Limit/
 ├── LimitApp.swift                  # App entry point
-├── ContentView.swift               # Main tab navigation (3 tabs)
-├── BluetoothManager.swift          # Bluetooth scale communication
-├── MaxForceTestView.swift          # Max force test UI
-├── ForceTestViewModel.swift        # Max force test logic
+├── ContentView.swift               # Main tab navigation
+├── BluetoothManager.swift          # BLE communication
 ├── CriticalForceTestView.swift     # CF test UI
 ├── CriticalForceViewModel.swift    # CF test logic + calculations
-├── TestResult.swift                # Data models for persistence + CSV export
-├── PersistenceManager.swift        # Save/load test results (JSON storage)
-└── HistoryView.swift               # Test history browser UI
+├── TestResult.swift                # Data models + CSV export
+├── PersistenceManager.swift        # Save/load (JSON)
+└── HistoryView.swift               # Test history UI
 ```
 
-## Bluetooth Scale Integration
+## Bluetooth Scale (IF_B7)
 
-### IF_B7 Scale Details
-- **Connection Type**: Passive BLE scanning (no active pairing required)
-- **Scale Name**: "IF_B7"
-- **Data Location**: Manufacturer data, bytes 12-13
-- **Data Format**: 16-bit big-endian value in units of 0.01 kg
-- **Update Rate**: Continuous broadcasts
+**Connection**: Passive BLE scanning - continuously reads from manufacturer data, no active pairing.
 
-### Implementation Notes
 ```swift
-// Weight extraction from manufacturer data
+// Weight extraction from manufacturer data (bytes 12-13)
 let rawValue = UInt16(bytes[13]) | (UInt16(bytes[12]) << 8)  // Big-endian
-let weightKg = Double(rawValue) / 100.0  // Convert to kg
+let weightKg = Double(rawValue) / 100.0  // 0.01 kg units
 ```
 
-**Important**: The app doesn't establish a traditional BLE connection. It continuously scans for advertisements and extracts force data from the manufacturer data field. This is why `disconnect()` just stops scanning.
+## Critical Force Test
 
-## Critical Force Test - Scientific Background
+### Protocol
+- **Phases**: 24 work cycles (4 minutes total)
+- **Preparation**: 10s to get in position
+- **Work**: 7s maximum force
+- **Rest**: 3s hands in anatomical position
+- **Data Collection**: Only during WORK/REST, not preparation
 
-### Protocol (from Research Paper)
-- **Duration**: 24 phases (4 minutes) - shortened from original 30 phases (5 minutes)
-- **Note**: Each "phase" = one work cycle (7s work + 3s rest)
-- **Work Phase**: 7 seconds of maximum force application
-- **Rest Phase**: 3 seconds with hands in anatomical position (no shaking allowed)
-- **Preparation**: 10 seconds to get into position before test starts
+### Phase Transitions
+```
+PREPARATION (10s, blue) → WORK (7s, green) → REST (3s, orange) → [repeat 24x] → COMPLETE
+```
 
-### Key Metrics
-1. **Current Force**: Real-time force reading from scale
-2. **Critical Force (CF)**: Live-updating after each phase (calculated from last 6 phases with 1 SD outlier filtering)
-3. **Mean Force**: Average force during each phase
-4. **Peak Force**: Maximum force during each phase (used internally, not displayed)
-5. **Impulse**: Force-time integral (kg·s) calculated using trapezoidal rule
-6. **W' (W-Prime)**: Total impulse above CF threshold (calculated at test completion)
+### Key Metrics & Calculations
 
-### Calculation Details
-
-**Critical Force** (updated live after each phase when 6+ phases complete):
+**Critical Force (CF)** - Live-updating after 6+ phases:
 ```swift
-// 1. Get last 6 phases
+// Uses last 6 phases with 1 SD outlier filtering
 let lastSix = Array(contractions.suffix(6))
-
-// 2. Calculate mean and standard deviation
 let mean = meanForces.reduce(0, +) / Double(meanForces.count)
-let variance = meanForces.map { pow($0 - mean, 2) }.reduce(0, +) / count
 let stdDev = sqrt(variance)
-
-// 3. Filter outliers (1 SD cutoff)
 let filteredForces = meanForces.filter { abs($0 - mean) <= stdDev }
-
-// 4. CF = mean of filtered forces
 criticalForce = filteredForces.reduce(0, +) / Double(filteredForces.count)
-
-// This is called in saveContractionData() to update currentCriticalForce
 ```
 
-**W' Calculation**:
+**W' (W-Prime)**:
 ```swift
-// For each contraction: impulse above CF
-let duration = contraction.endTime - contraction.startTime
+// Total impulse above CF
 let impulseAboveCF = max(0, (contraction.meanForce - CF) * duration)
 wPrime = sum of all impulseAboveCF
 ```
 
-## Data Persistence & Export
+**Impulse** - Trapezoidal rule integration over work phase
 
-### Persistence System
-Test results are automatically saved when a CF test completes. The `PersistenceManager` singleton handles:
-- **Storage Format**: JSON files in iOS Documents directory
-- **File Name**: `test_results.json`
-- **Date Encoding**: ISO8601 for cross-platform compatibility
-- **Auto-save**: Results saved immediately on test completion
+## Data Models
 
 ```swift
-// Data Models
 struct TestResult: Codable, Identifiable {
     let id: UUID
     let date: Date
@@ -131,192 +97,94 @@ struct PhaseData: Codable, Identifiable {
     let peakForce: Double
     let meanForce: Double
     let impulse: Double
+    let duration: Double
+    let rawReadings: [RawForceReading]  // ~70 readings per 7s phase
+}
+
+struct RawForceReading: Codable {
+    let timestamp: Double  // Relative to phase start
+    let force: Double
 }
 ```
 
+## Data Persistence & Export
+
+### Storage
+- **Format**: JSON in Documents directory (`test_results.json`)
+- **Encoding**: ISO8601 dates
+- **Auto-save**: On test completion
+- **Raw Data**: All force readings (~10Hz) stored with each phase
+
 ### CSV Export
-Users can export individual test results to CSV format:
-- **Location**: Temporary directory (for sharing via UIActivityViewController)
-- **Filename Format**: `CF_Test_yyyy-MM-dd_HHmmss.csv`
-- **Structure**: Header row + one row per phase with all metrics
-- **Access**: Export button in test results view and history detail view
-
-```csv
-Date,Phase,Peak Force (kg),Mean Force (kg),Impulse (kg·s)
-2026-02-22 14:30:00,1,45.2,42.1,294.7
-...
-```
-
-### History View Features
-- **List View**: All saved results sorted by date (most recent first)
-- **Detail View**: Full phase breakdown for selected result
-- **Swipe Actions**:
-  - Delete (trailing swipe, red)
-  - Export CSV (trailing swipe, blue)
-- **Bulk Delete**: Menu option to clear all history
-- **Empty State**: Friendly message when no results exist
-
-## Test State Management
-
-### Phase Transitions (CF Test)
-```
-PREPARATION (10s, blue)
-    ↓ (beep + haptic)
-WORK (7s, green) → saves phase data, updates CF (if ≥6 phases)
-    ↓ (beep + haptic)
-REST (3s, orange)
-    ↓ (beep + haptic, increment counter)
-WORK (7s, green) → repeat 24 times total
-    ↓ (after 24th phase)
-TEST COMPLETE → show results
-```
-
-### Important Implementation Detail
-**Data collection only happens during WORK and REST phases**, not during PREPARATION. The chart starts at 0 seconds when the first work phase begins.
-
-## UI Design Patterns
-
-### Consistency Between Tests
-Both Max Force and CF tests share:
-- **Spacing**: 16pt between major sections
-- **Metric Cards**: 42pt font for values, .headline for labels
-- **Chart Height**: 170-200pt
-- **Button Size**: `.controlSize(.large)` with 16pt spacing
-- **Corner Radius**: 12pt on cards
-- **Shadows**: `radius: 2` on cards
-
-### CF Test Specific Considerations
-- **ScrollView**: Wraps entire content to prevent overflow on smaller screens
-- **Phase Indicator**: Fixed-width badge (95pt) to prevent layout shift between WORK/REST
-- **Progress Bar**: Only shown during active test, displays "X / 24 phases"
-- **Critical Force Metric**: Appears after 6th phase completes, updates live after each subsequent phase
-  - Shown alongside Current Force in metric cards
-  - Always visible once calculable (not phase-dependent like old Peak metric)
-
-## Audio & Haptic Feedback
+- **Location**: `Caches/Exports/CF_Test_yyyy-MM-dd_HHmmss.csv`
+- **Structure**:
+  1. Summary statistics (phase-level metrics)
+  2. Raw force data (all individual readings)
+- **Sharing**: UIActivityViewController with `ExportItem` wrapper for reliable presentation
 
 ```swift
-// Phase transitions trigger:
-1. System beep sound (AudioServicesPlaySystemSound)
-2. Haptic feedback via callback to view
-3. Color change in UI (blue → green → orange)
+// Export pattern
+struct ExportItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+@State private var exportItem: ExportItem?
+
+.sheet(item: $exportItem) { item in
+    ShareSheet(items: [item.url])
+}
 ```
+
+## UI Components
+
+### Test Visualization
+- **Live Chart**: Last 10 seconds during test
+- **Complete Chart**: Full test data with CF reference line (green dashed) in results and history views
+- **Phase Indicator**: Fixed 95pt width to prevent layout shifts
+- **Metric Cards**: 42pt values, consistent 16pt spacing, 12pt corner radius
+
+### Results Display
+- CF and W' cards with color coding (green/blue)
+- Complete test chart with CF line
+- Phase-by-phase breakdown
+- Export button
 
 ## Common Pitfalls & Solutions
 
 ### 1. Layout Shifting
-**Problem**: UI elements move when text changes (e.g., WORK → REST)
-**Solution**: Use fixed-width frames for dynamic content
+Use fixed-width frames for dynamic content:
 ```swift
-Text(phaseLabel)
-    .frame(width: 95)  // Fixed width prevents shift
+Text(phaseLabel).frame(width: 95)  // Prevents WORK/REST shift
 ```
 
-### 2. Chart Data During Preparation
-**Problem**: Should data be collected during the 10-second preparation?
-**Solution**: No. Data collection starts when first WORK phase begins.
+### 2. Data Collection Timing
+Only collect data during WORK/REST phases, not preparation.
 
 ### 3. Live CF Updates
-**Problem**: When should Critical Force update?
-**Solution**: Calculate and update `currentCriticalForce` after each phase completes (in `saveContractionData()`). Requires minimum 6 phases. This gives users real-time feedback on their CF value.
+Update `currentCriticalForce` in `saveContractionData()` after each phase (min 6 phases required).
 
-### 4. Completion Detection
-**Problem**: When to mark the test as complete?
-**Solution**: After 24th phase's WORK phase completes (don't wait for REST after last phase)
+### 4. Test Completion
+Complete after 24th WORK phase - don't wait for final REST.
 
-### 5. Phase Timer
-**Problem**: Timer needs to handle three different durations
-**Solution**: Switch statement in `updatePhaseTimer()`:
-```swift
-let phaseDuration: TimeInterval
-switch currentPhase {
-case .preparation: phaseDuration = preparationDuration
-case .work: phaseDuration = workDuration
-case .rest: phaseDuration = restDuration
-}
-```
+### 5. Memory Management
+Keep only last 60s of force data points during active tests.
 
-### 6. Memory Management
-Keep only last 60 seconds of force data points to prevent memory growth during long sessions.
+### 6. Nested TabViews
+Use flat 3-tab structure to avoid overlapping tab bars.
 
-### 7. Nested TabViews
-**Problem**: Nested TabViews (Tests tab containing Max/CF tabs) creates overlapping tab bars
-**Solution**: Use flat structure with 3 top-level tabs (Max Force, Critical Force, History). Each test tab handles its own connection state.
+### 7. Export Sheet Presentation
+Use `.sheet(item:)` with `Identifiable` wrapper, not `.sheet(isPresented:)` with conditional view.
 
-## Testing Considerations
+### 8. File Sharing
+Use cache directory (`Caches/Exports/`), not temp directory. Mark files as excluded from iCloud backup.
 
-### Manual Testing Checklist
-- [ ] Bluetooth connection/disconnection works
-- [ ] Phase transitions occur at correct intervals (10s/7s/3s)
-- [ ] Audio beeps play on transitions
-- [ ] Haptic feedback triggers
-- [ ] Critical Force appears after 6th phase completes
-- [ ] Critical Force updates after each subsequent phase
-- [ ] Progress bar shows "X / 24 phases" correctly
-- [ ] Test completes after 24 phases
-- [ ] CF and W' calculations are correct
-- [ ] Results screen shows all phase data
-- [ ] Reset button clears all state (including currentCriticalForce)
-- [ ] Chart displays last 10 seconds correctly
-- [ ] No UI overlapping on smaller screens
-- [ ] Test results auto-save on completion
-- [ ] History view displays saved results
-- [ ] CSV export generates valid file
-- [ ] Share sheet allows sending CSV via email/airdrop
-- [ ] Delete actions work (individual and bulk)
-- [ ] Navigation between 3 tabs works smoothly
-- [ ] Connection state shows correctly on all test tabs
+## iOS System Warnings
 
-### Edge Cases
-1. **User stops test mid-way**: Should reset cleanly
-2. **Bluetooth disconnects during test**: Test should stop gracefully
-3. **Zero force readings**: Should handle gracefully (don't divide by zero)
-4. **Very high forces**: UI should not break layout
-5. **Fast tab switching**: State should persist per tab
-
-## Future Enhancement Ideas
-
-1. **Customizable Protocols**: Allow users to adjust work/rest durations
-2. **Multiple Scales**: Support for other Bluetooth scale models
-3. **Training Plans**: Structured workout programs
-4. **Grip Types**: Support for different grip positions (half crimp, full crimp, open hand)
-5. **Countdown Sounds**: Different beeps for 3-2-1 countdown
-6. **Progress Charts**: Visualize CF and W' trends over time in History tab
-7. **PDF Reports**: Generate formatted PDF reports with charts
-8. **Cloud Sync**: iCloud backup and sync across devices
-9. **Max Force History**: Add persistence for Max Force tests (currently CF only)
-10. **Comparison View**: Compare multiple test results side-by-side
-
-## References
-
-- Scientific Paper: Kellawan & Tschakovsky methodology for finger flexor critical force determination
-- Protocol: 7:3s work-to-rest ratio with rhythmic isometric maximum voluntary contractions
-- Statistical Method: 1 SD cutoff for outlier removal in end-test force calculation
-
-## Development Tips
-
-### When Adding New Tests
-1. Create separate ViewModel (inherit patterns from existing ones)
-2. Create separate View (maintain UI consistency)
-3. Add new tab in `ContentView.swift` TabView
-4. Reuse `BluetoothManager` - don't create separate instances
-5. Maintain 16pt spacing and consistent styling
-6. Consider if results should be persisted (extend `TestResult` model if needed)
-7. Add export functionality if applicable
-
-### When Modifying UI
-- Always test on smallest supported iPhone screen
-- Use ScrollView if content might overflow
-- Maintain visual consistency between tabs
-- Test with both light and dark mode
-
-### When Debugging Bluetooth
-- Check `BluetoothManager` print statements (every 20th packet)
-- Verify manufacturer data byte parsing
-- Confirm scale is broadcasting (check with LightBlue app)
-- Remember: no active connection, just passive scanning
+When exporting/sharing, iOS generates verbose console warnings (LaunchServices, CFPrefs, etc.). These are normal system logging from `UIActivityViewController` and can be safely ignored - they don't affect functionality.
 
 ---
 
 **Last Updated**: 2026-02-22
-**Project Status**: Core functionality complete with data persistence and CSV export. Navigation structure optimized (flat TabView). Ready for additional enhancements.
+
+**Status**: Core functionality complete. CSV export includes full raw data (work + rest phases). Test visualization with CF reference line in results and history views. Screen stays awake during tests.

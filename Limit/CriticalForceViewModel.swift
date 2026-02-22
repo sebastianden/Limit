@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 import AVFoundation
+import UIKit
 
 enum TestPhase {
     case preparation
@@ -23,11 +24,12 @@ struct ContractionData: Identifiable {
     let impulse: Double // force-time integral (kg·s)
     let startTime: TimeInterval
     let endTime: TimeInterval
+    let rawData: [(timestamp: TimeInterval, force: Double)] // Raw force readings
 }
 
 class CriticalForceViewModel: ObservableObject {
     // Test configuration
-    private let totalContractions = 24 // 4 minutes
+    private let totalContractions = 24 // 24 phases = 4 minutes total (7s work + 3s rest per phase)
     private let preparationDuration: TimeInterval = 10.0
     private let workDuration: TimeInterval = 7.0
     private let restDuration: TimeInterval = 3.0
@@ -53,16 +55,28 @@ class CriticalForceViewModel: ObservableObject {
 
     // Private state
     private var testStartTime: Date?
-    private var phaseStartTime: Date?
+    private var phaseStartTime: Date? // For phase timer display
+    private var contractionStartTime: Date? // For contraction data timestamps (not reset during REST)
     private var currentPhaseForceData: [(timestamp: TimeInterval, force: Double)] = []
     private var cancellables = Set<AnyCancellable>()
     private var timerCancellable: AnyCancellable?
     private var audioPlayer: AVAudioPlayer?
 
+    // Store work phase metrics separately (before including rest data)
+    private var workPhasePeakForce: Double = 0.0
+    private var workPhaseMeanForce: Double = 0.0
+    private var workPhaseImpulse: Double = 0.0
+    private var workPhaseStartTime: TimeInterval = 0.0
+    private var workPhaseEndTime: TimeInterval = 0.0
+
     // Callback for phase transitions (for haptic feedback)
     var onPhaseTransition: ((TestPhase) -> Void)?
 
     // MARK: - Computed Properties
+
+    var totalPhases: Int {
+        return totalContractions
+    }
 
     var progress: Double {
         if currentPhase == .preparation {
@@ -105,6 +119,9 @@ class CriticalForceViewModel: ObservableObject {
         currentContraction = 1
         phaseTimeRemaining = preparationDuration
 
+        // Disable idle timer to prevent screen from locking during test
+        UIApplication.shared.isIdleTimerDisabled = true
+
         // Subscribe to force updates
         forcePublisher
             .sink { [weak self] force in
@@ -124,6 +141,9 @@ class CriticalForceViewModel: ObservableObject {
         isTestActive = false
         timerCancellable?.cancel()
         cancellables.removeAll()
+
+        // Re-enable idle timer
+        UIApplication.shared.isIdleTimerDisabled = false
     }
 
     func resetTest() {
@@ -142,9 +162,18 @@ class CriticalForceViewModel: ObservableObject {
         wPrime = nil
         testStartTime = nil
         phaseStartTime = nil
+        contractionStartTime = nil
         currentPhaseForceData = []
+        workPhasePeakForce = 0.0
+        workPhaseMeanForce = 0.0
+        workPhaseImpulse = 0.0
+        workPhaseStartTime = 0.0
+        workPhaseEndTime = 0.0
         timerCancellable?.cancel()
         cancellables.removeAll()
+
+        // Re-enable idle timer
+        UIApplication.shared.isIdleTimerDisabled = false
     }
 
     // MARK: - Private Methods
@@ -184,34 +213,42 @@ class CriticalForceViewModel: ObservableObject {
             currentPhase = .work
             phaseTimeRemaining = workDuration
             phaseStartTime = Date()
+            contractionStartTime = Date() // Start timing the full contraction cycle
             currentPhaseForceData = []
             currentPeakForce = 0.0
             currentMeanForce = 0.0
             playBeep()
             onPhaseTransition?(.work)
         } else if currentPhase == .work {
-            // Finish work phase - save contraction data
-            saveContractionData()
+            // Finish work phase - calculate and store work metrics (don't save contraction yet)
+            calculateWorkPhaseMetrics()
 
-            // Check if test is complete
+            // Check if test is complete (after last work phase)
             if currentContraction >= totalContractions {
+                // Save the last contraction (work phase only, no rest after)
+                saveContractionData()
                 completeTest()
                 return
             }
 
-            // Transition to rest
+            // Transition to rest (continue collecting data in currentPhaseForceData)
             currentPhase = .rest
             phaseTimeRemaining = restDuration
-            phaseStartTime = Date()
-            currentPhaseForceData = []
+            phaseStartTime = Date() // For timer display only
+            // NOTE: Don't reset contractionStartTime - timestamps continue from work phase
+            // NOTE: Don't clear currentPhaseForceData - keep collecting through rest phase
             playBeep()
             onPhaseTransition?(.rest)
         } else {
-            // Transition from rest to next work phase
+            // Transition from rest to next work phase - now save the contraction with full data
+            saveContractionData()
+
+            // Move to next contraction
             currentContraction += 1
             currentPhase = .work
             phaseTimeRemaining = workDuration
             phaseStartTime = Date()
+            contractionStartTime = Date() // Start timing the new contraction cycle
             currentPhaseForceData = []
             currentPeakForce = 0.0
             currentMeanForce = 0.0
@@ -240,13 +277,16 @@ class CriticalForceViewModel: ObservableObject {
             dataPoints.removeAll { $0.timestamp < elapsed - 60 }
         }
 
-        // Track force data for current phase
-        if currentPhase == .work {
-            let phaseElapsed = Date().timeIntervalSince(phaseStartTime ?? startTime)
-            currentPhaseForceData.append((timestamp: phaseElapsed, force: force))
+        // Track force data for current phase (WORK and REST, but not PREPARATION)
+        if currentPhase == .work || currentPhase == .rest {
+            // Use contractionStartTime for continuous timestamps across work+rest
+            let contractionElapsed = Date().timeIntervalSince(contractionStartTime ?? startTime)
+            currentPhaseForceData.append((timestamp: contractionElapsed, force: force))
 
-            // Update real-time metrics
-            updateCurrentContractionMetrics()
+            // Update real-time metrics (only during work phase)
+            if currentPhase == .work {
+                updateCurrentContractionMetrics()
+            }
         }
     }
 
@@ -261,12 +301,12 @@ class CriticalForceViewModel: ObservableObject {
         currentMeanForce = sum / Double(currentPhaseForceData.count)
     }
 
-    private func saveContractionData() {
+    private func calculateWorkPhaseMetrics() {
         guard !currentPhaseForceData.isEmpty else { return }
 
-        // Calculate metrics
-        let peakForce = currentPhaseForceData.map { $0.force }.max() ?? 0.0
-        let meanForce = currentPhaseForceData.map { $0.force }.reduce(0, +) / Double(currentPhaseForceData.count)
+        // Calculate metrics from WORK phase only (before REST data is added)
+        workPhasePeakForce = currentPhaseForceData.map { $0.force }.max() ?? 0.0
+        workPhaseMeanForce = currentPhaseForceData.map { $0.force }.reduce(0, +) / Double(currentPhaseForceData.count)
 
         // Calculate impulse (force-time integral) using trapezoidal rule
         var impulse = 0.0
@@ -275,17 +315,25 @@ class CriticalForceViewModel: ObservableObject {
             let avgForce = (currentPhaseForceData[i].force + currentPhaseForceData[i-1].force) / 2.0
             impulse += avgForce * dt
         }
+        workPhaseImpulse = impulse
 
-        let startTime = currentPhaseForceData.first?.timestamp ?? 0.0
-        let endTime = currentPhaseForceData.last?.timestamp ?? 0.0
+        workPhaseStartTime = currentPhaseForceData.first?.timestamp ?? 0.0
+        workPhaseEndTime = currentPhaseForceData.last?.timestamp ?? 0.0
+    }
 
+    private func saveContractionData() {
+        guard !currentPhaseForceData.isEmpty else { return }
+
+        // Use pre-calculated work phase metrics (stored from end of work phase)
+        // But include full raw data (work + rest phases)
         let contraction = ContractionData(
             contractionNumber: currentContraction,
-            peakForce: peakForce,
-            meanForce: meanForce,
-            impulse: impulse,
-            startTime: startTime,
-            endTime: endTime
+            peakForce: workPhasePeakForce,
+            meanForce: workPhaseMeanForce,
+            impulse: workPhaseImpulse,
+            startTime: workPhaseStartTime,
+            endTime: workPhaseEndTime,
+            rawData: currentPhaseForceData // Includes both work and rest data
         )
 
         contractions.append(contraction)
@@ -325,6 +373,9 @@ class CriticalForceViewModel: ObservableObject {
         isTestCompleted = true
         timerCancellable?.cancel()
         cancellables.removeAll()
+
+        // Re-enable idle timer
+        UIApplication.shared.isIdleTimerDisabled = false
 
         // Calculate Critical Force and W'
         calculateResults()

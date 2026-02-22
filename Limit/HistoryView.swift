@@ -6,12 +6,12 @@
 //
 
 import SwiftUI
+import Charts
 
 struct HistoryView: View {
     @ObservedObject var persistenceManager: PersistenceManager
     @State private var selectedResult: TestResult?
-    @State private var showingExportSheet = false
-    @State private var exportURL: URL?
+    @State private var exportItem: ExportItem?
 
     var body: some View {
         NavigationStack {
@@ -41,10 +41,8 @@ struct HistoryView: View {
             .sheet(item: $selectedResult) { result in
                 TestResultDetailView(result: result, persistenceManager: persistenceManager)
             }
-            .sheet(isPresented: $showingExportSheet) {
-                if let url = exportURL {
-                    ShareSheet(items: [url])
-                }
+            .sheet(item: $exportItem) { item in
+                ShareSheet(items: [item.url])
             }
         }
     }
@@ -98,8 +96,7 @@ struct HistoryView: View {
 
     private func exportResult(_ result: TestResult) {
         if let url = persistenceManager.exportToCSV(result: result) {
-            exportURL = url
-            showingExportSheet = true
+            exportItem = ExportItem(url: url)
         }
     }
 }
@@ -171,8 +168,7 @@ struct TestResultDetailView: View {
     let persistenceManager: PersistenceManager
 
     @Environment(\.dismiss) var dismiss
-    @State private var showingExportSheet = false
-    @State private var exportURL: URL?
+    @State private var exportItem: ExportItem?
 
     var body: some View {
         NavigationStack {
@@ -183,6 +179,9 @@ struct TestResultDetailView: View {
                         summaryCard(title: "Critical Force", value: String(format: "%.2f", result.criticalForce), unit: "kg", color: .green)
                         summaryCard(title: "W'", value: String(format: "%.1f", result.wPrime), unit: "kg·s", color: .blue)
                     }
+
+                    // Full Test Chart
+                    fullTestChart(for: result)
 
                     // Phase Details
                     VStack(alignment: .leading, spacing: 12) {
@@ -217,10 +216,8 @@ struct TestResultDetailView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingExportSheet) {
-                if let url = exportURL {
-                    ShareSheet(items: [url])
-                }
+            .sheet(item: $exportItem) { item in
+                ShareSheet(items: [item.url])
             }
         }
     }
@@ -247,10 +244,82 @@ struct TestResultDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
+    private func fullTestChart(for result: TestResult) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Complete Test Data")
+                .font(.headline)
+
+            let cf = result.criticalForce
+
+            // Flatten all raw data with absolute timeline
+            // Each phase starts at (phaseNumber-1) * 10s (7s work + 3s rest)
+            let allDataPoints = result.phases.flatMap { phase -> [(time: Double, force: Double)] in
+                let phaseStartTime = Double(phase.phaseNumber - 1) * 10.0
+                return phase.rawReadings.map { reading in
+                    (time: phaseStartTime + reading.timestamp, force: reading.force)
+                }
+            }
+
+            // Calculate time domain
+            let maxTime = allDataPoints.map { $0.time }.max() ?? 0
+
+            Chart {
+                // Plot raw force data
+                ForEach(Array(allDataPoints.enumerated()), id: \.offset) { index, point in
+                    LineMark(
+                        x: .value("Time", point.time),
+                        y: .value("Force", point.force)
+                    )
+                    .foregroundStyle(.blue)
+                    .interpolationMethod(.stepEnd)
+                }
+
+                // Critical Force reference line
+                if cf > 0 {
+                    RuleMark(y: .value("Critical Force", cf))
+                        .foregroundStyle(.green)
+                        .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 5]))
+                        .annotation(position: .top, alignment: .trailing) {
+                            Text("CF: \(String(format: "%.1f", cf)) kg")
+                                .font(.caption)
+                                .padding(4)
+                                .background(Color.green.opacity(0.1))
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let force = value.as(Double.self) {
+                            Text("\(Int(force)) kg")
+                        }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let time = value.as(Double.self) {
+                            Text("\(Int(time))s")
+                        }
+                    }
+                }
+            }
+            .chartXScale(domain: 0...max(maxTime, 1))
+            .frame(height: 200)
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(radius: 2)
+    }
+
     private func exportResult() {
         if let url = persistenceManager.exportToCSV(result: result) {
-            exportURL = url
-            showingExportSheet = true
+            exportItem = ExportItem(url: url)
         }
     }
 }
@@ -283,15 +352,24 @@ struct PhaseDetailRow: View {
     }
 }
 
+// MARK: - Export Item
+struct ExportItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 // MARK: - Share Sheet
 struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        return controller
     }
 
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
+        // No updates needed
+    }
 }
 
 #Preview {
