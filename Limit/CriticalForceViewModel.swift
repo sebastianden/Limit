@@ -329,8 +329,22 @@ class CriticalForceViewModel: ObservableObject {
         // Calculate Critical Force and W'
         calculateResults()
 
+        // Save results to persistence
+        saveResults()
+
         // Play completion sound
         playCompletionSound()
+    }
+
+    private func saveResults() {
+        guard let cf = criticalForce, let wp = wPrime else {
+            print("⚠️ Cannot save results: CF or W' is nil")
+            return
+        }
+
+        let result = TestResult(from: contractions, criticalForce: cf, wPrime: wp)
+        PersistenceManager.shared.save(result: result)
+        print("✅ Saved test result: CF=\(cf), W'=\(wp)")
     }
 
     private func calculateResults() {

@@ -11,6 +11,8 @@ import Charts
 struct CriticalForceTestView: View {
     @ObservedObject var bluetoothManager: BluetoothManager
     @StateObject private var testViewModel = CriticalForceViewModel()
+    @State private var showingExportSheet = false
+    @State private var exportURL: URL?
 
     var body: some View {
         ScrollView {
@@ -37,6 +39,11 @@ struct CriticalForceTestView: View {
         }
         .onAppear {
             setupHapticFeedback()
+        }
+        .sheet(isPresented: $showingExportSheet) {
+            if let url = exportURL {
+                ShareSheet(items: [url])
+            }
         }
     }
 
@@ -379,18 +386,41 @@ struct CriticalForceTestView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .shadow(radius: 2)
 
-                // Reset Button
-                Button(action: {
-                    testViewModel.resetTest()
-                }) {
-                    Label("New Test", systemImage: "arrow.counterclockwise")
-                        .frame(maxWidth: .infinity)
+                // Action Buttons
+                HStack(spacing: 16) {
+                    Button(action: {
+                        exportCurrentResult()
+                    }) {
+                        Label("Export CSV", systemImage: "square.and.arrow.up")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+
+                    Button(action: {
+                        testViewModel.resetTest()
+                    }) {
+                        Label("New Test", systemImage: "arrow.counterclockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
                 .padding(.bottom)
             }
             .padding()
+        }
+    }
+
+    private func exportCurrentResult() {
+        guard let cf = testViewModel.criticalForce, let wp = testViewModel.wPrime else {
+            return
+        }
+
+        let result = TestResult(from: testViewModel.contractions, criticalForce: cf, wPrime: wp)
+        if let url = PersistenceManager.shared.exportToCSV(result: result) {
+            exportURL = url
+            showingExportSheet = true
         }
     }
 

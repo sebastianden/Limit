@@ -15,18 +15,31 @@
 - **Language**: Swift
 - **Bluetooth**: CoreBluetooth (passive scanning, no active connection)
 - **State Management**: Combine framework with @Published properties
+- **Persistence**: JSON files in Documents directory
+- **Export**: CSV format with ISO8601 dates
+
+### Navigation Structure
+The app uses a **single TabView with 3 tabs**:
+1. **Max Force Tab**: Connection view or Max Force test
+2. **Critical Force Tab**: Connection view or CF test
+3. **History Tab**: Browse saved test results
+
+**Important**: Earlier versions had nested TabViews (Tests → Max/CF) which caused overlapping tab bars. The current flat structure avoids this issue. Each test tab independently shows the connection view when disconnected.
 
 ### Key Files
 
 ```
 Limit/
 ├── LimitApp.swift                  # App entry point
-├── ContentView.swift               # Main tab navigation + connection UI
+├── ContentView.swift               # Main tab navigation (3 tabs)
 ├── BluetoothManager.swift          # Bluetooth scale communication
 ├── MaxForceTestView.swift          # Max force test UI
 ├── ForceTestViewModel.swift        # Max force test logic
 ├── CriticalForceTestView.swift     # CF test UI
-└── CriticalForceViewModel.swift    # CF test logic + calculations
+├── CriticalForceViewModel.swift    # CF test logic + calculations
+├── TestResult.swift                # Data models for persistence + CSV export
+├── PersistenceManager.swift        # Save/load test results (JSON storage)
+└── HistoryView.swift               # Test history browser UI
 ```
 
 ## Bluetooth Scale Integration
@@ -92,6 +105,56 @@ let duration = contraction.endTime - contraction.startTime
 let impulseAboveCF = max(0, (contraction.meanForce - CF) * duration)
 wPrime = sum of all impulseAboveCF
 ```
+
+## Data Persistence & Export
+
+### Persistence System
+Test results are automatically saved when a CF test completes. The `PersistenceManager` singleton handles:
+- **Storage Format**: JSON files in iOS Documents directory
+- **File Name**: `test_results.json`
+- **Date Encoding**: ISO8601 for cross-platform compatibility
+- **Auto-save**: Results saved immediately on test completion
+
+```swift
+// Data Models
+struct TestResult: Codable, Identifiable {
+    let id: UUID
+    let date: Date
+    let criticalForce: Double
+    let wPrime: Double
+    let phases: [PhaseData]
+}
+
+struct PhaseData: Codable, Identifiable {
+    let id: UUID
+    let phaseNumber: Int
+    let peakForce: Double
+    let meanForce: Double
+    let impulse: Double
+}
+```
+
+### CSV Export
+Users can export individual test results to CSV format:
+- **Location**: Temporary directory (for sharing via UIActivityViewController)
+- **Filename Format**: `CF_Test_yyyy-MM-dd_HHmmss.csv`
+- **Structure**: Header row + one row per phase with all metrics
+- **Access**: Export button in test results view and history detail view
+
+```csv
+Date,Phase,Peak Force (kg),Mean Force (kg),Impulse (kg·s)
+2026-02-22 14:30:00,1,45.2,42.1,294.7
+...
+```
+
+### History View Features
+- **List View**: All saved results sorted by date (most recent first)
+- **Detail View**: Full phase breakdown for selected result
+- **Swipe Actions**:
+  - Delete (trailing swipe, red)
+  - Export CSV (trailing swipe, blue)
+- **Bulk Delete**: Menu option to clear all history
+- **Empty State**: Friendly message when no results exist
 
 ## Test State Management
 
@@ -176,6 +239,10 @@ case .rest: phaseDuration = restDuration
 ### 6. Memory Management
 Keep only last 60 seconds of force data points to prevent memory growth during long sessions.
 
+### 7. Nested TabViews
+**Problem**: Nested TabViews (Tests tab containing Max/CF tabs) creates overlapping tab bars
+**Solution**: Use flat structure with 3 top-level tabs (Max Force, Critical Force, History). Each test tab handles its own connection state.
+
 ## Testing Considerations
 
 ### Manual Testing Checklist
@@ -192,6 +259,13 @@ Keep only last 60 seconds of force data points to prevent memory growth during l
 - [ ] Reset button clears all state (including currentCriticalForce)
 - [ ] Chart displays last 10 seconds correctly
 - [ ] No UI overlapping on smaller screens
+- [ ] Test results auto-save on completion
+- [ ] History view displays saved results
+- [ ] CSV export generates valid file
+- [ ] Share sheet allows sending CSV via email/airdrop
+- [ ] Delete actions work (individual and bulk)
+- [ ] Navigation between 3 tabs works smoothly
+- [ ] Connection state shows correctly on all test tabs
 
 ### Edge Cases
 1. **User stops test mid-way**: Should reset cleanly
@@ -202,14 +276,16 @@ Keep only last 60 seconds of force data points to prevent memory growth during l
 
 ## Future Enhancement Ideas
 
-1. **Data Persistence**: Save test results to local database
-2. **History View**: Track progress over time
-3. **Customizable Protocols**: Allow users to adjust work/rest durations
-4. **Export Results**: Share CSV or PDF reports
-5. **Multiple Scales**: Support for other Bluetooth scale models
-6. **Training Plans**: Structured workout programs
-7. **Grip Types**: Support for different grip positions (half crimp, full crimp, open hand)
-8. **Countdown Sounds**: Different beeps for 3-2-1 countdown
+1. **Customizable Protocols**: Allow users to adjust work/rest durations
+2. **Multiple Scales**: Support for other Bluetooth scale models
+3. **Training Plans**: Structured workout programs
+4. **Grip Types**: Support for different grip positions (half crimp, full crimp, open hand)
+5. **Countdown Sounds**: Different beeps for 3-2-1 countdown
+6. **Progress Charts**: Visualize CF and W' trends over time in History tab
+7. **PDF Reports**: Generate formatted PDF reports with charts
+8. **Cloud Sync**: iCloud backup and sync across devices
+9. **Max Force History**: Add persistence for Max Force tests (currently CF only)
+10. **Comparison View**: Compare multiple test results side-by-side
 
 ## References
 
@@ -222,9 +298,11 @@ Keep only last 60 seconds of force data points to prevent memory growth during l
 ### When Adding New Tests
 1. Create separate ViewModel (inherit patterns from existing ones)
 2. Create separate View (maintain UI consistency)
-3. Add new tab in `ContentView.swift`
+3. Add new tab in `ContentView.swift` TabView
 4. Reuse `BluetoothManager` - don't create separate instances
 5. Maintain 16pt spacing and consistent styling
+6. Consider if results should be persisted (extend `TestResult` model if needed)
+7. Add export functionality if applicable
 
 ### When Modifying UI
 - Always test on smallest supported iPhone screen
@@ -241,4 +319,4 @@ Keep only last 60 seconds of force data points to prevent memory growth during l
 ---
 
 **Last Updated**: 2026-02-22
-**Project Status**: Core functionality complete, ready for enhancements
+**Project Status**: Core functionality complete with data persistence and CSV export. Navigation structure optimized (flat TabView). Ready for additional enhancements.
