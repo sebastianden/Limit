@@ -10,206 +10,87 @@ import Charts
 
 struct ContentView: View {
     @StateObject private var bluetoothManager = BluetoothManager()
-    @StateObject private var testViewModel = ForceTestViewModel()
-    
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                // Connection Status
-                connectionSection
-                
-                if bluetoothManager.isConnected {
-                    // Max Force Display
-                    forceDisplay
-                    
-                    // Real-time Graph
-                    forceChart
-                    
-                    // Test Controls
-                    testControls
+            if bluetoothManager.isConnected {
+                // Test Selection Tabs
+                TabView {
+                    MaxForceTestView(bluetoothManager: bluetoothManager)
+                        .tabItem {
+                            Label("Max Force", systemImage: "bolt.fill")
+                        }
+
+                    CriticalForceTestView(bluetoothManager: bluetoothManager)
+                        .tabItem {
+                            Label("Critical Force", systemImage: "timer")
+                        }
                 }
-                
-                Spacer()
-            }
-            .padding()
-            .navigationTitle("Finger Strength Test")
-        }
-    }
-    
-    // MARK: - Connection Section
-    private var connectionSection: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Circle()
-                    .fill(bluetoothManager.isConnected ? Color.green : Color.red)
-                    .frame(width: 12, height: 12)
-                
-                Text(bluetoothManager.connectionStatus)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            
-            if !bluetoothManager.isConnected {
-                Button(action: {
-                    if bluetoothManager.isScanning {
-                        bluetoothManager.stopScanning()
-                    } else {
-                        bluetoothManager.startScanning()
-                    }
-                }) {
-                    Label(
-                        bluetoothManager.isScanning ? "Stop Scanning" : "Start Scanning",
-                        systemImage: bluetoothManager.isScanning ? "stop.circle" : "antenna.radiowaves.left.and.right"
-                    )
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-            } else {
-                Button("Stop", role: .destructive) {
-                    bluetoothManager.disconnect()
-                    testViewModel.stopTest()
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-        .padding()
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .shadow(radius: 2)
-    }
-    
-    // MARK: - Force Display
-    private var forceDisplay: some View {
-        HStack(spacing: 16) {
-            // Current Force
-            VStack(spacing: 8) {
-                Text("Current")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(String(format: "%.1f", bluetoothManager.currentForce))
-                        .font(.system(size: 48, weight: .bold, design: .rounded))
-                        .foregroundStyle(.primary)
-                    
-                    Text("kg")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding()
-            .background(Color.blue.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            
-            // Max Force
-            VStack(spacing: 8) {
-                Text("Max")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(String(format: "%.1f", testViewModel.maxForce))
-                        .font(.system(size: 48, weight: .bold, design: .rounded))
-                        .foregroundStyle(.primary)
-                    
-                    Text("kg")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding()
-            .background(Color.green.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-        }
-    }
-    
-    // MARK: - Force Chart
-    private var forceChart: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Force Over Time")
-                .font(.headline)
-            
-            let displayData = testViewModel.last10SecondsData
-            
-            Chart(displayData) { dataPoint in
-                LineMark(
-                    x: .value("Time", dataPoint.timestamp),
-                    y: .value("Force", dataPoint.force)
-                )
-                .foregroundStyle(.blue)
-                .interpolationMethod(.stepEnd)
-                
-                AreaMark(
-                    x: .value("Time", dataPoint.timestamp),
-                    y: .value("Force", dataPoint.force)
-                )
-                .foregroundStyle(.blue.opacity(0.2))
-                .interpolationMethod(.stepEnd)
-            }
-            .chartYAxis {
-                AxisMarks(position: .leading) { value in
-                    AxisGridLine()
-                    AxisValueLabel {
-                        if let force = value.as(Double.self) {
-                            Text("\(Int(force)) kg")
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(Color.green)
+                                .frame(width: 8, height: 8)
+                            Text("Connected")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize()
                         }
                     }
-                }
-            }
-            .chartXAxis {
-                AxisMarks { value in
-                    AxisGridLine()
-                    AxisValueLabel {
-                        if let time = value.as(Double.self) {
-                            Text("\(String(format: "%.0f", time))s")
+
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Disconnect") {
+                            bluetoothManager.disconnect()
                         }
+                        .font(.caption)
+                        .fixedSize()
                     }
                 }
-            }
-            .chartXScale(domain: testViewModel.xAxisRange)
-            .frame(height: 250)
-        }
-        .padding()
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .shadow(radius: 2)
-    }
-    
-    // MARK: - Test Controls
-    private var testControls: some View {
-        HStack(spacing: 16) {
-            if !testViewModel.isTestActive {
-                Button(action: {
-                    testViewModel.startTest(forcePublisher: bluetoothManager.$currentForce)
-                }) {
-                    Label("Start Test", systemImage: "play.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
             } else {
-                Button(action: {
-                    testViewModel.stopTest()
-                }) {
-                    Label("Stop Test", systemImage: "stop.fill")
-                        .frame(maxWidth: .infinity)
+                // Connection View
+                VStack(spacing: 24) {
+                    Spacer()
+
+                    Image(systemName: "scale.3d")
+                        .font(.system(size: 80))
+                        .foregroundStyle(.secondary)
+
+                    VStack(spacing: 8) {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 10, height: 10)
+
+                            Text(bluetoothManager.connectionStatus)
+                                .font(.headline)
+                        }
+
+                        Text("Connect to IF_B7 scale to begin")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button(action: {
+                        if bluetoothManager.isScanning {
+                            bluetoothManager.stopScanning()
+                        } else {
+                            bluetoothManager.startScanning()
+                        }
+                    }) {
+                        Label(
+                            bluetoothManager.isScanning ? "Stop Scanning" : "Start Scanning",
+                            systemImage: bluetoothManager.isScanning ? "stop.circle" : "antenna.radiowaves.left.and.right"
+                        )
+                        .frame(maxWidth: 280)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+
+                    Spacer()
                 }
-                .buttonStyle(.bordered)
-                .tint(.red)
-                .controlSize(.large)
+                .padding()
             }
-            
-            Button(action: {
-                testViewModel.resetTest()
-            }) {
-                Label("Reset", systemImage: "arrow.counterclockwise")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
-            .disabled(testViewModel.isTestActive)
         }
     }
 }
