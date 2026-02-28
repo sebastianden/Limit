@@ -73,6 +73,9 @@ class CriticalForceViewModel: ObservableObject {
     private var workPhaseStartTime: TimeInterval = 0.0
     private var workPhaseEndTime: TimeInterval = 0.0
 
+    // Running sum for incremental mean calculation (performance optimization)
+    private var currentPhaseForceSum: Double = 0.0
+
     // Callback for phase transitions (for haptic feedback)
     var onPhaseTransition: ((TestPhase) -> Void)?
 
@@ -175,6 +178,7 @@ class CriticalForceViewModel: ObservableObject {
         phaseStartTime = nil
         contractionStartTime = nil
         currentPhaseForceData = []
+        currentPhaseForceSum = 0.0
         workPhasePeakForce = 0.0
         workPhaseMeanForce = 0.0
         workPhaseImpulse = 0.0
@@ -226,6 +230,7 @@ class CriticalForceViewModel: ObservableObject {
             phaseStartTime = Date()
             contractionStartTime = Date() // Start timing the full contraction cycle
             currentPhaseForceData = []
+            currentPhaseForceSum = 0.0
             currentPeakForce = 0.0
             currentMeanForce = 0.0
             playBeep()
@@ -261,6 +266,7 @@ class CriticalForceViewModel: ObservableObject {
             phaseStartTime = Date()
             contractionStartTime = Date() // Start timing the new contraction cycle
             currentPhaseForceData = []
+            currentPhaseForceSum = 0.0
             currentPeakForce = 0.0
             currentMeanForce = 0.0
             playBeep()
@@ -294,6 +300,9 @@ class CriticalForceViewModel: ObservableObject {
             let contractionElapsed = Date().timeIntervalSince(contractionStartTime ?? startTime)
             currentPhaseForceData.append((timestamp: contractionElapsed, force: force))
 
+            // Update running sum for incremental mean calculation
+            currentPhaseForceSum += force
+
             // Update real-time metrics (only during work phase)
             if currentPhase == .work {
                 updateCurrentContractionMetrics()
@@ -304,12 +313,12 @@ class CriticalForceViewModel: ObservableObject {
     private func updateCurrentContractionMetrics() {
         guard !currentPhaseForceData.isEmpty else { return }
 
-        // Peak force
-        currentPeakForce = currentPhaseForceData.map { $0.force }.max() ?? 0.0
+        // Peak force - only check latest reading (O(1) instead of O(n))
+        let latestForce = currentPhaseForceData.last?.force ?? 0.0
+        currentPeakForce = max(currentPeakForce, latestForce)
 
-        // Mean force
-        let sum = currentPhaseForceData.map { $0.force }.reduce(0, +)
-        currentMeanForce = sum / Double(currentPhaseForceData.count)
+        // Mean force - use running sum (O(1) instead of O(n))
+        currentMeanForce = currentPhaseForceSum / Double(currentPhaseForceData.count)
     }
 
     private func calculateWorkPhaseMetrics() {
