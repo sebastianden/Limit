@@ -15,8 +15,8 @@ enum Hand: String, Codable, CaseIterable {
     var displayName: String { rawValue }
     var icon: String {
         switch self {
-        case .left: return "hand.point.up.left.fill"
-        case .right: return "hand.point.up.right.fill"
+        case .left: return "l.square.fill"
+        case .right: return "r.square.fill"
         }
     }
 }
@@ -110,8 +110,8 @@ extension TestResult {
 
         // Add relative values if bodyweight available
         if let bodyweight = bodyweight, bodyweight > 0 {
-            csv += "CF/kg: \(String(format: "%.3f", criticalForce / bodyweight))\n"
-            csv += "W'/kg: \(String(format: "%.2f", wPrime / bodyweight))\n"
+            csv += "CF/kg: \(String(format: "%.1f", (criticalForce / bodyweight) * 100))%\n"
+            csv += "W'/kg: \(String(format: "%.1f", (wPrime / bodyweight) * 100))%\n"
         }
 
         csv += "\n"

@@ -29,7 +29,7 @@ struct ContractionData: Identifiable {
 
 class CriticalForceViewModel: ObservableObject {
     // Test configuration
-    private let totalContractions = 6 // 6 phases = 1 minute total (7s work + 3s rest per phase) - FOR TESTING
+    private let totalContractions = 24 // 24 phases = 4 minutes total (7s work + 3s rest per phase)
     private let preparationDuration: TimeInterval = 10.0
     private let workDuration: TimeInterval = 7.0
     private let restDuration: TimeInterval = 3.0

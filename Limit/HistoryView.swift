@@ -168,20 +168,14 @@ struct HistoryView: View {
             progressChart
 
             // Legend
-            if selectedHandFilter == .all {
-                HStack(spacing: 20) {
-                    Label("Left Hand", systemImage: "circle.fill")
-                        .foregroundStyle(.blue)
-                        .font(.caption)
+            HStack(spacing: 20) {
+                Label("Left Hand", systemImage: "circle.fill")
+                    .foregroundStyle(.blue)
+                    .font(.caption)
 
-                    Label("Right Hand", systemImage: "circle.fill")
-                        .foregroundStyle(.green)
-                        .font(.caption)
-
-                    Label("Unknown", systemImage: "circle.fill")
-                        .foregroundStyle(.gray)
-                        .font(.caption)
-                }
+                Label("Right Hand", systemImage: "circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.caption)
             }
         }
         .padding()
@@ -231,6 +225,7 @@ struct HistoryView: View {
                     "Right": .green,
                     "Unknown": .gray
                 ])
+                .chartLegend(.hidden)
                 .chartYAxis {
                     AxisMarks(position: .leading) { value in
                         AxisGridLine()
@@ -284,7 +279,7 @@ struct HistoryView: View {
 
             case (.criticalForce, .relative):
                 if let bw = result.bodyweight, bw > 0 {
-                    value = result.criticalForce / bw
+                    value = (result.criticalForce / bw) * 100
                 }
 
             case (.wPrime, .absolute):
@@ -292,7 +287,7 @@ struct HistoryView: View {
 
             case (.wPrime, .relative):
                 if let bw = result.bodyweight, bw > 0 {
-                    value = result.wPrime / bw
+                    value = (result.wPrime / bw) * 100
                 }
             }
 
@@ -322,11 +317,11 @@ struct HistoryView: View {
         case (.criticalForce, .absolute):
             return String(format: "%.1f kg", value)
         case (.criticalForce, .relative):
-            return String(format: "%.2f", value)
+            return String(format: "%.0f%%", value)
         case (.wPrime, .absolute):
             return String(format: "%.0f kg·s", value)
         case (.wPrime, .relative):
-            return String(format: "%.1f", value)
+            return String(format: "%.0f%%", value)
         }
     }
 }

@@ -341,7 +341,7 @@ struct CriticalForceTestView: View {
                     if let bodyweight = testViewModel.testBodyweight,
                        let cf = testViewModel.criticalForce,
                        bodyweight > 0 {
-                        Text("\(String(format: "%.3f", cf / bodyweight)) kg/kg bodyweight")
+                        Text("\(String(format: "%.1f", (cf / bodyweight) * 100))% of bodyweight")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -375,7 +375,7 @@ struct CriticalForceTestView: View {
                     if let bodyweight = testViewModel.testBodyweight,
                        let wp = testViewModel.wPrime,
                        bodyweight > 0 {
-                        Text("\(String(format: "%.2f", wp / bodyweight)) kg·s/kg bodyweight")
+                        Text("\(String(format: "%.1f", (wp / bodyweight) * 100))% of bodyweight")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
