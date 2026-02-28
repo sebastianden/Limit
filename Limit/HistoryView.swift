@@ -12,6 +12,25 @@ struct HistoryView: View {
     @ObservedObject var persistenceManager: PersistenceManager
     @State private var selectedResult: TestResult?
     @State private var exportItem: ExportItem?
+    @State private var selectedMetric: ProgressMetric = .criticalForce
+    @State private var selectedView: ProgressView = .absolute
+    @State private var selectedHandFilter: HandFilter = .all
+
+    enum ProgressMetric: String, CaseIterable {
+        case criticalForce = "Critical Force"
+        case wPrime = "W'"
+    }
+
+    enum ProgressView: String, CaseIterable {
+        case absolute = "Absolute"
+        case relative = "Per kg BW"
+    }
+
+    enum HandFilter: String, CaseIterable {
+        case all = "All"
+        case left = "Left Only"
+        case right = "Right Only"
+    }
 
     var body: some View {
         NavigationStack {
@@ -70,26 +89,38 @@ struct HistoryView: View {
     // MARK: - Results List
     private var resultsList: some View {
         List {
-            ForEach(persistenceManager.testResults) { result in
-                ResultRow(result: result)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        selectedResult = result
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            persistenceManager.delete(result: result)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
+            // Progress Chart Section
+            Section {
+                progressChartSection
+            }
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
 
-                        Button {
-                            exportResult(result)
-                        } label: {
-                            Label("Export", systemImage: "square.and.arrow.up")
+            // Test Results Section
+            Section {
+                ForEach(persistenceManager.testResults) { result in
+                    ResultRow(result: result)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            selectedResult = result
                         }
-                        .tint(.blue)
-                    }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                persistenceManager.delete(result: result)
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+
+                            Button {
+                                exportResult(result)
+                            } label: {
+                                Label("Export", systemImage: "square.and.arrow.up")
+                            }
+                            .tint(.blue)
+                        }
+                }
+            } header: {
+                Text("Test Results")
             }
         }
     }
@@ -97,6 +128,205 @@ struct HistoryView: View {
     private func exportResult(_ result: TestResult) {
         if let url = persistenceManager.exportToCSV(result: result) {
             exportItem = ExportItem(url: url)
+        }
+    }
+
+    // MARK: - Progress Chart Section
+    private var progressChartSection: some View {
+        VStack(spacing: 16) {
+            // Title
+            Text("Progress Over Time")
+                .font(.title2)
+                .fontWeight(.bold)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Metric selector
+            Picker("Metric", selection: $selectedMetric) {
+                ForEach(ProgressMetric.allCases, id: \.self) { metric in
+                    Text(metric.rawValue).tag(metric)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            // View type selector
+            Picker("View", selection: $selectedView) {
+                ForEach(ProgressView.allCases, id: \.self) { view in
+                    Text(view.rawValue).tag(view)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            // Hand filter
+            Picker("Hand", selection: $selectedHandFilter) {
+                ForEach(HandFilter.allCases, id: \.self) { filter in
+                    Text(filter.rawValue).tag(filter)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            // Chart
+            progressChart
+
+            // Legend
+            if selectedHandFilter == .all {
+                HStack(spacing: 20) {
+                    Label("Left Hand", systemImage: "circle.fill")
+                        .foregroundStyle(.blue)
+                        .font(.caption)
+
+                    Label("Right Hand", systemImage: "circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.caption)
+
+                    Label("Unknown", systemImage: "circle.fill")
+                        .foregroundStyle(.gray)
+                        .font(.caption)
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+    }
+
+    private var progressChart: some View {
+        let filteredResults = getFilteredResults()
+
+        return Group {
+            if filteredResults.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "chart.line.uptrend.xyaxis")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.secondary)
+
+                    Text("No data available")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    if selectedView == .relative {
+                        Text("Bodyweight data needed for relative view")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(height: 200)
+            } else {
+                Chart {
+                    ForEach(filteredResults) { dataPoint in
+                        LineMark(
+                            x: .value("Date", dataPoint.date),
+                            y: .value("Value", dataPoint.value)
+                        )
+                        .foregroundStyle(by: .value("Hand", dataPoint.handLabel))
+                        .symbol(by: .value("Hand", dataPoint.handLabel))
+
+                        PointMark(
+                            x: .value("Date", dataPoint.date),
+                            y: .value("Value", dataPoint.value)
+                        )
+                        .foregroundStyle(by: .value("Hand", dataPoint.handLabel))
+                    }
+                }
+                .chartForegroundStyleScale([
+                    "Left": .blue,
+                    "Right": .green,
+                    "Unknown": .gray
+                ])
+                .chartYAxis {
+                    AxisMarks(position: .leading) { value in
+                        AxisGridLine()
+                        AxisValueLabel {
+                            if let val = value.as(Double.self) {
+                                Text(formatYAxisValue(val))
+                            }
+                        }
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks { value in
+                        AxisGridLine()
+                        AxisValueLabel(format: .dateTime.month().day())
+                    }
+                }
+                .frame(height: 200)
+            }
+        }
+    }
+
+    // MARK: - Progress Chart Helper Methods
+    private struct ProgressDataPoint: Identifiable {
+        let id: UUID
+        let date: Date
+        let value: Double
+        let handLabel: String
+    }
+
+    private func getFilteredResults() -> [ProgressDataPoint] {
+        var filtered = persistenceManager.testResults
+
+        // Filter by hand
+        switch selectedHandFilter {
+        case .all:
+            break
+        case .left:
+            filtered = filtered.filter { $0.hand == .left }
+        case .right:
+            filtered = filtered.filter { $0.hand == .right }
+        }
+
+        // Convert to data points
+        let dataPoints: [ProgressDataPoint] = filtered.compactMap { result in
+            var value: Double?
+
+            // Calculate value based on metric and view type
+            switch (selectedMetric, selectedView) {
+            case (.criticalForce, .absolute):
+                value = result.criticalForce
+
+            case (.criticalForce, .relative):
+                if let bw = result.bodyweight, bw > 0 {
+                    value = result.criticalForce / bw
+                }
+
+            case (.wPrime, .absolute):
+                value = result.wPrime
+
+            case (.wPrime, .relative):
+                if let bw = result.bodyweight, bw > 0 {
+                    value = result.wPrime / bw
+                }
+            }
+
+            guard let finalValue = value else { return nil }
+
+            let handLabel: String
+            if let hand = result.hand {
+                handLabel = hand.displayName
+            } else {
+                handLabel = "Unknown"
+            }
+
+            return ProgressDataPoint(
+                id: result.id,
+                date: result.date,
+                value: finalValue,
+                handLabel: handLabel
+            )
+        }
+
+        // Sort by date (oldest first for chronological chart)
+        return dataPoints.sorted { $0.date < $1.date }
+    }
+
+    private func formatYAxisValue(_ value: Double) -> String {
+        switch (selectedMetric, selectedView) {
+        case (.criticalForce, .absolute):
+            return String(format: "%.1f kg", value)
+        case (.criticalForce, .relative):
+            return String(format: "%.2f", value)
+        case (.wPrime, .absolute):
+            return String(format: "%.0f kg·s", value)
+        case (.wPrime, .relative):
+            return String(format: "%.1f", value)
         }
     }
 }
@@ -107,8 +337,18 @@ struct ResultRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(result.formattedDate)
-                .font(.headline)
+            HStack {
+                Text(result.formattedDate)
+                    .font(.headline)
+
+                Spacer()
+
+                // Show hand icon if available
+                if let hand = result.hand {
+                    Image(systemName: hand.icon)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             HStack(spacing: 24) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -145,6 +385,25 @@ struct ResultRow: View {
                     }
                 }
 
+                // Show bodyweight if available
+                if let bodyweight = result.bodyweight {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("BW")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(alignment: .firstTextBaseline, spacing: 2) {
+                            Text(String(format: "%.1f", bodyweight))
+                                .font(.title3)
+                                .fontWeight(.semibold)
+
+                            Text("kg")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 4) {
@@ -178,6 +437,39 @@ struct TestResultDetailView: View {
                     HStack(spacing: 16) {
                         summaryCard(title: "Critical Force", value: String(format: "%.2f", result.criticalForce), unit: "kg", color: .green)
                         summaryCard(title: "W'", value: String(format: "%.1f", result.wPrime), unit: "kg·s", color: .blue)
+                    }
+
+                    // Hand and Bodyweight badges
+                    if result.hand != nil || result.bodyweight != nil {
+                        HStack(spacing: 16) {
+                            if let hand = result.hand {
+                                HStack(spacing: 6) {
+                                    Image(systemName: hand.icon)
+                                        .foregroundStyle(.secondary)
+                                    Text(hand.displayName)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color(.secondarySystemBackground))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+
+                            if let bodyweight = result.bodyweight {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "figure.stand")
+                                        .foregroundStyle(.secondary)
+                                    Text("\(String(format: "%.1f", bodyweight)) kg")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color(.secondarySystemBackground))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                        }
                     }
 
                     // Full Test Chart

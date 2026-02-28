@@ -29,7 +29,7 @@ struct ContractionData: Identifiable {
 
 class CriticalForceViewModel: ObservableObject {
     // Test configuration
-    private let totalContractions = 24 // 24 phases = 4 minutes total (7s work + 3s rest per phase)
+    private let totalContractions = 6 // 6 phases = 1 minute total (7s work + 3s rest per phase) - FOR TESTING
     private let preparationDuration: TimeInterval = 10.0
     private let workDuration: TimeInterval = 7.0
     private let restDuration: TimeInterval = 3.0
@@ -52,6 +52,10 @@ class CriticalForceViewModel: ObservableObject {
     @Published var currentCriticalForce: Double? = nil // Updated after each phase
     @Published var wPrime: Double? = nil
     @Published var contractions: [ContractionData] = []
+
+    // Test configuration (set before test starts)
+    @Published var testHand: Hand? = nil
+    @Published var testBodyweight: Double? = nil
 
     // Private state
     private var testStartTime: Date?
@@ -110,8 +114,13 @@ class CriticalForceViewModel: ObservableObject {
 
     // MARK: - Test Control
 
-    func startTest(forcePublisher: Published<Double>.Publisher) {
+    func startTest(forcePublisher: Published<Double>.Publisher, hand: Hand, bodyweight: Double) {
         resetTest()
+
+        // Store test configuration
+        testHand = hand
+        testBodyweight = bodyweight
+
         isTestActive = true
         testStartTime = Date()
         phaseStartTime = Date()
@@ -160,6 +169,8 @@ class CriticalForceViewModel: ObservableObject {
         criticalForce = nil
         currentCriticalForce = nil
         wPrime = nil
+        testHand = nil
+        testBodyweight = nil
         testStartTime = nil
         phaseStartTime = nil
         contractionStartTime = nil
@@ -393,9 +404,9 @@ class CriticalForceViewModel: ObservableObject {
             return
         }
 
-        let result = TestResult(from: contractions, criticalForce: cf, wPrime: wp)
+        let result = TestResult(from: contractions, criticalForce: cf, wPrime: wp, hand: testHand, bodyweight: testBodyweight)
         PersistenceManager.shared.save(result: result)
-        print("✅ Saved test result: CF=\(cf), W'=\(wp)")
+        print("✅ Saved test result: CF=\(cf), W'=\(wp), Hand=\(testHand?.displayName ?? "nil"), BW=\(testBodyweight ?? 0)")
     }
 
     private func calculateResults() {

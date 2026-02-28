@@ -12,6 +12,7 @@ struct CriticalForceTestView: View {
     @ObservedObject var bluetoothManager: BluetoothManager
     @StateObject private var testViewModel = CriticalForceViewModel()
     @State private var exportItem: ExportItem?
+    @State private var showConfigSheet = false
 
     var body: some View {
         ScrollView {
@@ -41,6 +42,15 @@ struct CriticalForceTestView: View {
         }
         .sheet(item: $exportItem) { item in
             ShareSheet(items: [item.url])
+        }
+        .sheet(isPresented: $showConfigSheet) {
+            TestConfigurationView { hand, bodyweight in
+                testViewModel.startTest(
+                    forcePublisher: bluetoothManager.$currentForce,
+                    hand: hand,
+                    bodyweight: bodyweight
+                )
+            }
         }
     }
 
@@ -249,7 +259,7 @@ struct CriticalForceTestView: View {
         HStack(spacing: 16) {
             if !testViewModel.isTestActive {
                 Button(action: {
-                    testViewModel.startTest(forcePublisher: bluetoothManager.$currentForce)
+                    showConfigSheet = true
                 }) {
                     Label("Start Test", systemImage: "play.fill")
                         .frame(maxWidth: .infinity)
@@ -293,6 +303,21 @@ struct CriticalForceTestView: View {
                     Text("Test Complete")
                         .font(.largeTitle)
                         .fontWeight(.bold)
+
+                    // Display test configuration
+                    HStack(spacing: 16) {
+                        if let hand = testViewModel.testHand {
+                            Label(hand.displayName, systemImage: hand.icon)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if let bodyweight = testViewModel.testBodyweight {
+                            Label("\(String(format: "%.1f", bodyweight)) kg", systemImage: "figure.stand")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 .padding(.top)
 
@@ -309,6 +334,15 @@ struct CriticalForceTestView: View {
 
                         Text("kg")
                             .font(.title)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    // Show relative value if bodyweight available
+                    if let bodyweight = testViewModel.testBodyweight,
+                       let cf = testViewModel.criticalForce,
+                       bodyweight > 0 {
+                        Text("\(String(format: "%.3f", cf / bodyweight)) kg/kg bodyweight")
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
 
@@ -334,6 +368,15 @@ struct CriticalForceTestView: View {
 
                         Text("kg·s")
                             .font(.title)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    // Show relative value if bodyweight available
+                    if let bodyweight = testViewModel.testBodyweight,
+                       let wp = testViewModel.wPrime,
+                       bodyweight > 0 {
+                        Text("\(String(format: "%.2f", wp / bodyweight)) kg·s/kg bodyweight")
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
 
@@ -491,7 +534,7 @@ struct CriticalForceTestView: View {
             return
         }
 
-        let result = TestResult(from: testViewModel.contractions, criticalForce: cf, wPrime: wp)
+        let result = TestResult(from: testViewModel.contractions, criticalForce: cf, wPrime: wp, hand: testViewModel.testHand, bodyweight: testViewModel.testBodyweight)
         if let url = PersistenceManager.shared.exportToCSV(result: result) {
             exportItem = ExportItem(url: url)
         }

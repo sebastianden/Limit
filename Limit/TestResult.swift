@@ -7,6 +7,20 @@
 
 import Foundation
 
+// MARK: - Hand Enum
+enum Hand: String, Codable, CaseIterable {
+    case left = "Left"
+    case right = "Right"
+
+    var displayName: String { rawValue }
+    var icon: String {
+        switch self {
+        case .left: return "hand.point.up.left.fill"
+        case .right: return "hand.point.up.right.fill"
+        }
+    }
+}
+
 // MARK: - Test Result Model
 struct TestResult: Codable, Identifiable {
     let id: UUID
@@ -14,22 +28,28 @@ struct TestResult: Codable, Identifiable {
     let criticalForce: Double
     let wPrime: Double
     let phases: [PhaseData]
+    let hand: Hand?
+    let bodyweight: Double?
 
-    init(id: UUID = UUID(), date: Date = Date(), criticalForce: Double, wPrime: Double, phases: [PhaseData]) {
+    init(id: UUID = UUID(), date: Date = Date(), criticalForce: Double, wPrime: Double, phases: [PhaseData], hand: Hand? = nil, bodyweight: Double? = nil) {
         self.id = id
         self.date = date
         self.criticalForce = criticalForce
         self.wPrime = wPrime
         self.phases = phases
+        self.hand = hand
+        self.bodyweight = bodyweight
     }
 
     // Convert from ContractionData
-    init(from contractions: [ContractionData], criticalForce: Double, wPrime: Double) {
+    init(from contractions: [ContractionData], criticalForce: Double, wPrime: Double, hand: Hand? = nil, bodyweight: Double? = nil) {
         self.id = UUID()
         self.date = Date()
         self.criticalForce = criticalForce
         self.wPrime = wPrime
         self.phases = contractions.map { PhaseData(from: $0) }
+        self.hand = hand
+        self.bodyweight = bodyweight
     }
 }
 
@@ -76,8 +96,24 @@ extension TestResult {
     func toCSV() -> String {
         var csv = "Critical Force Test Results\n"
         csv += "Date: \(formatDate(date))\n"
+
+        // Add hand and bodyweight if available
+        if let hand = hand {
+            csv += "Hand: \(hand.displayName)\n"
+        }
+        if let bodyweight = bodyweight {
+            csv += "Bodyweight: \(String(format: "%.1f", bodyweight)) kg\n"
+        }
+
         csv += "Critical Force (CF): \(String(format: "%.2f", criticalForce)) kg\n"
         csv += "W' (W-Prime): \(String(format: "%.1f", wPrime)) kg·s\n"
+
+        // Add relative values if bodyweight available
+        if let bodyweight = bodyweight, bodyweight > 0 {
+            csv += "CF/kg: \(String(format: "%.3f", criticalForce / bodyweight))\n"
+            csv += "W'/kg: \(String(format: "%.2f", wPrime / bodyweight))\n"
+        }
+
         csv += "\n"
 
         // SECTION 1: Phase Summary Statistics
