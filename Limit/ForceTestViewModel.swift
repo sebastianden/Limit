@@ -19,9 +19,14 @@ class ForceTestViewModel: ObservableObject {
     @Published var maxForce: Double = 0.0
     @Published var dataPoints: [ForceDataPoint] = []
     @Published var currentForce: Double = 0.0
-    
+
     private var testStartTime: Date?
     private var cancellables = Set<AnyCancellable>()
+
+    // DisplayLink for synchronized chart updates (performance optimization)
+    private var displayLink: DisplayLink?
+    private var pendingChartDataPoints: [ForceDataPoint] = []
+    private let chartUpdateLock = NSLock()
     
     // Computed property to get last 10 seconds of data
     var last10SecondsData: [ForceDataPoint] {
@@ -51,45 +56,93 @@ class ForceTestViewModel: ObservableObject {
         maxForce = 0.0
         dataPoints = []
         testStartTime = Date()
-        
+
+        // Start DisplayLink for synchronized chart updates (60Hz cap)
+        startDisplayLink()
+
         forcePublisher
             .sink { [weak self] force in
                 self?.updateTest(with: force)
             }
             .store(in: &cancellables)
     }
-    
+
     func stopTest() {
         isTestActive = false
         cancellables.removeAll()
+
+        // Stop DisplayLink
+        stopDisplayLink()
     }
-    
+
     func resetTest() {
         maxForce = 0.0
         dataPoints = []
         currentForce = 0.0
         testStartTime = nil
+
+        // Clear DisplayLink buffer
+        chartUpdateLock.lock()
+        pendingChartDataPoints.removeAll()
+        chartUpdateLock.unlock()
     }
     
     private func updateTest(with force: Double) {
         guard isTestActive, let startTime = testStartTime else { return }
-        
+
         currentForce = force
-        
+
         // Update max force
         if force > maxForce {
             maxForce = force
         }
-        
-        // Add data point
+
+        // Buffer data point for chart (DisplayLink will flush at screen refresh rate)
         let elapsed = Date().timeIntervalSince(startTime)
         let dataPoint = ForceDataPoint(timestamp: elapsed, force: force)
-        dataPoints.append(dataPoint)
-        
-        // Keep only last 60 seconds of data for memory management
-        // (even though we only display 10)
-        if elapsed > 60 {
-            dataPoints.removeAll { $0.timestamp < elapsed - 60 }
+
+        chartUpdateLock.lock()
+        pendingChartDataPoints.append(dataPoint)
+        chartUpdateLock.unlock()
+    }
+
+    // MARK: - DisplayLink Management (Performance Optimization)
+
+    private func startDisplayLink() {
+        displayLink = DisplayLink()
+        displayLink?.start { [weak self] in
+            self?.flushChartData()
+        }
+    }
+
+    private func stopDisplayLink() {
+        displayLink?.stop()
+        displayLink = nil
+    }
+
+    private func flushChartData() {
+        // Move pending data points to published array (synchronized with screen refresh)
+        chartUpdateLock.lock()
+        defer { chartUpdateLock.unlock() }
+
+        guard !pendingChartDataPoints.isEmpty else { return }
+
+        // Append all pending points
+        dataPoints.append(contentsOf: pendingChartDataPoints)
+        pendingChartDataPoints.removeAll()
+
+        // Keep only last 60 seconds for memory management
+        // Only trim every 100 readings to avoid O(n) operation on every update
+        if dataPoints.count % 100 == 0 {
+            guard let startTime = testStartTime else { return }
+            let elapsed = Date().timeIntervalSince(startTime)
+
+            if elapsed > 60 {
+                let cutoffTime = elapsed - 60
+                if let firstValidIndex = dataPoints.firstIndex(where: { $0.timestamp >= cutoffTime }) {
+                    dataPoints.removeFirst(firstValidIndex)
+                }
+            }
         }
     }
 }

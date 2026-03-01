@@ -29,13 +29,16 @@ Flat TabView with 3 tabs (Max Force, Critical Force, History). No nested tabs to
 Limit/
 ├── LimitApp.swift                  # App entry point
 ├── ContentView.swift               # Main tab navigation
-├── BluetoothManager.swift          # BLE communication
+├── BluetoothManager.swift          # BLE communication + performance optimizations
 ├── CriticalForceTestView.swift     # CF test UI
 ├── CriticalForceViewModel.swift    # CF test logic + calculations
+├── ForceTestViewModel.swift        # Max force test logic
 ├── TestConfigurationView.swift     # Pre-test hand/bodyweight input
 ├── TestResult.swift                # Data models + CSV export
 ├── PersistenceManager.swift        # Save/load (JSON)
-└── HistoryView.swift               # Test history UI + progress charts
+├── HistoryView.swift               # Test history UI + progress charts
+└── Utils/
+    └── DisplayLink.swift           # CADisplayLink wrapper for 60Hz UI sync
 ```
 
 ## Bluetooth Scale (IF_B7)
@@ -46,6 +49,63 @@ Limit/
 // Weight extraction from manufacturer data (bytes 12-13)
 let rawValue = UInt16(bytes[13]) | (UInt16(bytes[12]) << 8)  // Big-endian
 let weightKg = Double(rawValue) / 100.0  // 0.01 kg units
+```
+
+### Performance Optimizations
+
+The app implements multiple performance optimizations to maintain consistent ~10Hz BLE readings throughout long test sessions:
+
+1. **DisplayLink Synchronization** (60Hz cap)
+   - UI updates capped at screen refresh rate (60Hz) instead of processing every BLE packet
+   - Prevents SwiftUI from recalculating views thousands of times during 4-minute tests
+   - Implemented in: `BluetoothManager`, `CriticalForceViewModel`, `ForceTestViewModel`
+
+2. **Background Queue for BLE**
+   - BLE callbacks run on dedicated background queue (not main thread)
+   - Prevents main thread blocking from BLE operations
+   - Queue: `DispatchQueue(label: "com.limit.bluetooth", qos: .userInitiated)`
+
+3. **Buffered Force Updates**
+   - BLE readings buffered in thread-safe storage (NSLock protected)
+   - Flushed to `@Published` properties at 60Hz via DisplayLink
+   - Reduces main thread DispatchQueue.async calls from ~10/sec to 60/sec max
+
+4. **iOS BLE Scan Throttling Prevention**
+   - iOS automatically throttles duplicate BLE advertisements after ~100 seconds
+   - **Solution**: Automatic scan restart every 10 seconds
+   - Briefly stops and restarts `scanForPeripherals()` to reset throttling
+   - Timer managed with scan lifecycle (starts/stops with scanning)
+
+5. **Batched Array Operations**
+   - Data point trimming only every 100 readings (not on every update)
+   - Converts O(n) cleanup operations from high frequency to low frequency
+   - Keeps last 60 seconds of data for memory management
+
+6. **Incremental Calculations**
+   - Running sum for O(1) mean force calculation (not O(n) array reduce)
+   - Incremental peak tracking (only compare latest value, not full scan)
+   - Reuse calculated values instead of rescanning arrays
+
+**Result**: Consistent ~10Hz BLE readings throughout entire test duration with smooth, responsive UI.
+
+```swift
+// DisplayLink pattern (used in BluetoothManager, ViewModels)
+private var displayLink: DisplayLink?
+private var pendingDataPoints: [DataPoint] = []
+private let dataLock = NSLock()
+
+// Buffer data on BLE callback (background queue)
+dataLock.lock()
+pendingDataPoints.append(newData)
+dataLock.unlock()
+
+// Flush at 60Hz (DisplayLink callback)
+private func flushData() {
+    dataLock.lock()
+    defer { dataLock.unlock() }
+    publishedData.append(contentsOf: pendingDataPoints)
+    pendingDataPoints.removeAll()
+}
 ```
 
 ## Critical Force Test
@@ -255,6 +315,6 @@ When exporting/sharing, iOS generates verbose console warnings (LaunchServices, 
 
 ---
 
-**Last Updated**: 2026-02-28
+**Last Updated**: 2026-03-01
 
-**Status**: Feature complete with hand/bodyweight tracking and progress analytics. Pre-test configuration captures hand (L/R) and bodyweight. CSV export includes relative percentages (CF%, W'%). Progress chart in History view shows trends over time with hand filtering and bodyweight normalization. Screen stays awake during tests. Backward compatible with existing test data.
+**Status**: Feature complete with hand/bodyweight tracking, progress analytics, and comprehensive performance optimizations. Pre-test configuration captures hand (L/R) and bodyweight. CSV export includes relative percentages (CF%, W'%). Progress chart in History view shows trends over time with hand filtering and bodyweight normalization. Screen stays awake during tests. Performance optimizations include DisplayLink synchronization (60Hz UI cap), background BLE queue, buffered updates, automatic scan restart (10s interval) to prevent iOS throttling, batched array operations, and incremental calculations. Maintains consistent ~10Hz BLE readings throughout 4+ minute tests. Backward compatible with existing test data.

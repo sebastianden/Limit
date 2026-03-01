@@ -76,6 +76,11 @@ class CriticalForceViewModel: ObservableObject {
     // Running sum for incremental mean calculation (performance optimization)
     private var currentPhaseForceSum: Double = 0.0
 
+    // DisplayLink for synchronized chart updates (performance optimization)
+    private var displayLink: DisplayLink?
+    private var pendingChartDataPoints: [ForceDataPoint] = []
+    private let chartUpdateLock = NSLock()
+
     // Callback for phase transitions (for haptic feedback)
     var onPhaseTransition: ((TestPhase) -> Void)?
 
@@ -144,6 +149,9 @@ class CriticalForceViewModel: ObservableObject {
         // Start phase timer
         startPhaseTimer()
 
+        // Start DisplayLink for synchronized chart updates (60Hz cap)
+        startDisplayLink()
+
         // Play start beep
         playBeep()
         onPhaseTransition?(.preparation)
@@ -153,6 +161,9 @@ class CriticalForceViewModel: ObservableObject {
         isTestActive = false
         timerCancellable?.cancel()
         cancellables.removeAll()
+
+        // Stop DisplayLink
+        stopDisplayLink()
 
         // Re-enable idle timer
         UIApplication.shared.isIdleTimerDisabled = false
@@ -186,6 +197,11 @@ class CriticalForceViewModel: ObservableObject {
         workPhaseEndTime = 0.0
         timerCancellable?.cancel()
         cancellables.removeAll()
+
+        // Clear DisplayLink buffer
+        chartUpdateLock.lock()
+        pendingChartDataPoints.removeAll()
+        chartUpdateLock.unlock()
 
         // Re-enable idle timer
         UIApplication.shared.isIdleTimerDisabled = false
@@ -284,15 +300,13 @@ class CriticalForceViewModel: ObservableObject {
             return
         }
 
-        // Add data point for chart
+        // Buffer data point for chart (DisplayLink will flush at screen refresh rate)
         let elapsed = Date().timeIntervalSince(startTime)
         let dataPoint = ForceDataPoint(timestamp: elapsed, force: force)
-        dataPoints.append(dataPoint)
 
-        // Keep only last 60 seconds for memory management
-        if elapsed > 60 {
-            dataPoints.removeAll { $0.timestamp < elapsed - 60 }
-        }
+        chartUpdateLock.lock()
+        pendingChartDataPoints.append(dataPoint)
+        chartUpdateLock.unlock()
 
         // Track force data for current phase (WORK and REST, but not PREPARATION)
         if currentPhase == .work || currentPhase == .rest {
@@ -324,9 +338,9 @@ class CriticalForceViewModel: ObservableObject {
     private func calculateWorkPhaseMetrics() {
         guard !currentPhaseForceData.isEmpty else { return }
 
-        // Calculate metrics from WORK phase only (before REST data is added)
-        workPhasePeakForce = currentPhaseForceData.map { $0.force }.max() ?? 0.0
-        workPhaseMeanForce = currentPhaseForceData.map { $0.force }.reduce(0, +) / Double(currentPhaseForceData.count)
+        // Reuse incrementally calculated values (no need to scan array again)
+        workPhasePeakForce = currentPeakForce
+        workPhaseMeanForce = currentMeanForce
 
         // Calculate impulse (force-time integral) using trapezoidal rule
         var impulse = 0.0
@@ -394,6 +408,10 @@ class CriticalForceViewModel: ObservableObject {
         timerCancellable?.cancel()
         cancellables.removeAll()
 
+        // Stop DisplayLink and flush any remaining data
+        stopDisplayLink()
+        flushChartData() // Final flush to ensure all data is displayed
+
         // Re-enable idle timer
         UIApplication.shared.isIdleTimerDisabled = false
 
@@ -405,6 +423,46 @@ class CriticalForceViewModel: ObservableObject {
 
         // Play completion sound
         playCompletionSound()
+    }
+
+    // MARK: - DisplayLink Management (Performance Optimization)
+
+    private func startDisplayLink() {
+        displayLink = DisplayLink()
+        displayLink?.start { [weak self] in
+            self?.flushChartData()
+        }
+    }
+
+    private func stopDisplayLink() {
+        displayLink?.stop()
+        displayLink = nil
+    }
+
+    private func flushChartData() {
+        // Move pending data points to published array (synchronized with screen refresh)
+        chartUpdateLock.lock()
+        defer { chartUpdateLock.unlock() }
+
+        guard !pendingChartDataPoints.isEmpty else { return }
+
+        // Append all pending points
+        dataPoints.append(contentsOf: pendingChartDataPoints)
+        pendingChartDataPoints.removeAll()
+
+        // Keep only last 60 seconds for memory management
+        // Only trim every 100 readings to avoid O(n) operation on every update
+        if dataPoints.count % 100 == 0 {
+            guard let startTime = testStartTime else { return }
+            let elapsed = Date().timeIntervalSince(startTime)
+
+            if elapsed > 60 {
+                let cutoffTime = elapsed - 60
+                if let firstValidIndex = dataPoints.firstIndex(where: { $0.timestamp >= cutoffTime }) {
+                    dataPoints.removeFirst(firstValidIndex)
+                }
+            }
+        }
     }
 
     private func saveResults() {
