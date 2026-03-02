@@ -22,7 +22,7 @@ struct TestConfigurationView: View {
                 Section {
                     Picker("Hand", selection: $selectedHand) {
                         ForEach(Hand.allCases, id: \.self) { hand in
-                            Label(hand.displayName, systemImage: hand.icon)
+                            Text(hand.displayName)
                                 .tag(hand)
                         }
                     }
