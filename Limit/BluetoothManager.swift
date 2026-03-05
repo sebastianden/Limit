@@ -91,16 +91,29 @@ class BluetoothManager: NSObject, ObservableObject {
         displayLink = nil
     }
 
+    /// Pause DisplayLink temporarily (e.g., when showing configuration sheets)
+    /// This prevents rapid UI updates from interfering with user input
+    func pauseDisplayLink() {
+        displayLink?.stop()
+    }
+
+    /// Resume DisplayLink after pause
+    func resumeDisplayLink() {
+        guard isScanning else { return }
+        displayLink?.start { [weak self] in
+            self?.flushForceUpdate()
+        }
+    }
+
     private func flushForceUpdate() {
         // Update published force value at screen refresh rate (60Hz)
+        // Note: DisplayLink callback already runs on main thread, so update directly
         forceLock.lock()
         let latestForce = pendingForceValue
         forceLock.unlock()
 
-        // Update on main thread (required for @Published)
-        DispatchQueue.main.async {
-            self.currentForce = latestForce
-        }
+        // Update directly - we're already on main thread from DisplayLink
+        self.currentForce = latestForce
     }
 
     // MARK: - Scan Restart Timer (Prevents iOS Throttling)

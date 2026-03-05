@@ -43,13 +43,34 @@ struct CriticalForceTestView: View {
         .sheet(item: $exportItem) { item in
             ShareSheet(items: [item.url])
         }
-        .sheet(isPresented: $showConfigSheet) {
+        .sheet(isPresented: $showConfigSheet, onDismiss: {
+            // Resume DisplayLink when sheet is dismissed
+            bluetoothManager.resumeDisplayLink()
+        }) {
             TestConfigurationView { hand, bodyweight in
                 testViewModel.startTest(
                     forcePublisher: bluetoothManager.$currentForce,
                     hand: hand,
                     bodyweight: bodyweight
                 )
+            }
+        }
+        .onChange(of: showConfigSheet) { _, isShowing in
+            if isShowing {
+                // Pause DisplayLink while configuring to prevent UI interference
+                bluetoothManager.pauseDisplayLink()
+            }
+        }
+        .onChange(of: testViewModel.isTestCompleted) { _, isCompleted in
+            if isCompleted {
+                // Pause DisplayLink when viewing results - no need for 60Hz updates
+                bluetoothManager.pauseDisplayLink()
+            }
+        }
+        .onChange(of: testViewModel.isTestActive) { _, isActive in
+            if isActive {
+                // Resume DisplayLink when test starts
+                bluetoothManager.resumeDisplayLink()
             }
         }
     }

@@ -8,7 +8,7 @@
 import Foundation
 
 // MARK: - Hand Enum
-enum Hand: String, Codable, CaseIterable {
+enum Hand: String, Codable, CaseIterable, Hashable {
     case left = "Left"
     case right = "Right"
 

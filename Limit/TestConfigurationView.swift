@@ -21,10 +21,8 @@ struct TestConfigurationView: View {
             Form {
                 Section {
                     Picker("Hand", selection: $selectedHand) {
-                        ForEach(Hand.allCases, id: \.self) { hand in
-                            Text(hand.displayName)
-                                .tag(hand)
-                        }
+                        Text("Left").tag(Hand.left)
+                        Text("Right").tag(Hand.right)
                     }
                     .pickerStyle(.segmented)
                 } header: {
